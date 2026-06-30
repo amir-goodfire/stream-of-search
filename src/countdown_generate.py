@@ -37,6 +37,7 @@ parser.add_argument("--randomize_backtrack", action="store_true", help="DFS: sam
 parser.add_argument("--prune_repeated_states", action="store_true", help="DFS: prune any successor whose exact state (multiset of numbers) was already generated earlier in the search")
 parser.add_argument("--temperature", type=float, default=1.0, help="DFS: temperature for the heuristic-weighted distribution (lower = sharper toward the best state)")
 parser.add_argument("--max_nodes", type=int, default=None, help="DFS: cap on the number of explored successors; the search is cut short (rating 0) if it reaches this without finding the target. Bounds memory/trace size for stochastic policies. None = no limit")
+parser.add_argument("--no_search_steps", action="store_true", help="Drop the per-step 'search_steps' records (eval-only, unused for training) from the large train/grow split to cut file size and memory. Keep them on the small val splits.")
 
 # split for growth mode on or off 
 parser.add_argument("--grow", action="store_true", help="grow mode on or off, only a new train set is created")
@@ -69,15 +70,30 @@ if __name__ == "__main__":
     average_zeros = {3: [], 4: [], 5: []}
     total_samples = {3: 0, 4: 0, 5: 0}
 
-    data_samples = {}
-    
+    os.makedirs(args.data_dir, exist_ok=True)
+    train_solutions = set()
+
     for split, target_nums in zip(splits, target_list):
 
-        data_samples[split] = []
         if split == "train" or split=="grow":
             num_samples = args.num_samples
         else:
             num_samples = 1000
+
+        out_path = (
+            f"{args.data_dir}/{split}{args.offset}_b{args.start_range}"
+            f"_t{args.max_target}_n{args.num_samples}_{args.search}.json"
+        )
+        # Stream each sample straight to disk instead of accumulating the whole
+        # split in RAM: the 500k-sample train split (each carrying a large
+        # ``search_steps``) is tens of GB as live objects, which is what OOMs.
+        out_f = open(out_path, "w")
+        out_f.write("[")
+        wrote_any = False
+        # ``search_steps`` is only consumed by candidate eval, never by training,
+        # and is ~80% of each sample. Drop it for the huge train/grow split when
+        # requested to keep both memory and file size down.
+        drop_steps = args.no_search_steps and split in ("train", "grow")
 
         zero_count = 0
         success_count = 0
@@ -101,7 +117,7 @@ if __name__ == "__main__":
             nums, solution = cd.generate(target)
             no_backtrack_trace = cd.convert_to_path(target, nums, solution)
             if split == "val":
-                while solution in [s["solution"] for s in data_samples["train"]]:
+                while repr(solution) in train_solutions:
                     target = random.choice(target_nums)
                     nums, solution = cd.generate(target)
             search_steps = None
@@ -155,17 +171,25 @@ if __name__ == "__main__":
             if search_type == "bfs":
                 search_type += f"_{beam_size}"
 
-            data_samples[split].append({
+            sample = {
                 "nums": nums,
                 "target": target,
                 "solution": solution,
                 "search_path": search_path,
-                "search_steps": search_steps,
+                "search_steps": None if drop_steps else search_steps,
                 "rating": rating,
                 "search_type": search_type,
                 "optimal_path": no_backtrack_trace,
                 "heuristic": heuristic.__name__
-            })
+            }
+            # One compact JSON object per line, together forming a valid JSON
+            # array, so downstream json.load() still works while peak memory
+            # stays at a single sample.
+            out_f.write(("," if wrote_any else "") + "\n")
+            json.dump(sample, out_f)
+            wrote_any = True
+            if split in ("train", "grow"):
+                train_solutions.add(repr(solution))
             enc = tiktoken.get_encoding("cl100k_base")
             tokens = enc.encode(search_path)
             if rating == 0:
@@ -181,6 +205,5 @@ if __name__ == "__main__":
         print(f"average token length: start size 3: {(sum(average_token_length[3]) / total_samples[3]) if total_samples[3] else None if total_samples[3] else None}, start size 4: {(sum(average_token_length[4]) / total_samples[4]) if total_samples[4] else None}, start size 5: {(sum(average_token_length[5]) / total_samples[5]) if total_samples[5] else None}")
         print(f"average reward: start size 3: {(sum(average_reward[3]) / total_samples[3]) if total_samples[3] else None}, start size 4: {(sum(average_reward[4]) / total_samples[4]) if total_samples[4] else None}, start size 5: {(sum(average_reward[5]) / total_samples[5]) if total_samples[5] else None}")
 
-        os.makedirs(args.data_dir, exist_ok=True)
-        with open(f"{args.data_dir}/{split}{args.offset}_b{args.start_range}_t{args.max_target}_n{args.num_samples}_{args.search}.json", "w") as f:
-            json.dump(data_samples[split], f, indent=4)
+        out_f.write("\n]" if wrote_any else "]")
+        out_f.close()

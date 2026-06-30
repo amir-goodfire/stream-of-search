@@ -10,10 +10,13 @@ from transformers import (
     AutoTokenizer,
     DataCollatorForSeq2Seq,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
 )
 
 import wandb
+
+from candidate_utils import build_state_to_candidates, iter_decision_prefixes
 
 
 def _load_split(path, train_type):
@@ -26,6 +29,110 @@ def _load_split(path, train_type):
     return Dataset.from_list(
         [{"text": r[field], "rating": r.get("rating", 0.0)} for r in raw]
     )
+
+
+class CandidateEvalCallback(TrainerCallback):
+    """Teacher-forced candidate-set accuracy, evaluated on every Trainer eval
+    (i.e. every ``eval_steps``) and logged to W&B / the console.
+
+    For each recorded ``expand`` decision in the eval traces we feed the model
+    the ground-truth prefix up to that node, greedily generate the next line, and
+    check whether it falls inside the recorded candidate set (``in_set_acc``) and
+    whether it matches the exact step the trace took (``exact_gold_acc``). The
+    in-set rate is the "does the model only ever propose states the search allows"
+    metric to train against. See ``eval_candidates.teacher_forced``.
+
+    Decision prefixes are built once up front from the eval file (which keeps its
+    ``search_steps``); only the small val splits carry those records, so this is
+    cheap to hold in memory.
+    """
+
+    def __init__(self, tokenizer, eval_path, max_decisions=500, batch_size=16,
+                 max_new_tokens=48, max_len=2048, use_wandb=False):
+        self.tokenizer = tokenizer
+        self.batch_size = batch_size
+        self.max_new_tokens = max_new_tokens
+        self.max_len = max_len
+        self.use_wandb = use_wandb
+
+        bos = tokenizer.bos_token or ""
+        with open(eval_path, "r") as f:
+            data = json.load(f)
+        self.prefixes, self.golds, self.candsets = [], [], []
+        for sample in data:
+            steps = sample.get("search_steps")
+            if not steps:
+                continue
+            mapping = build_state_to_candidates(steps)
+            for prefix, state, gold in iter_decision_prefixes(sample["search_path"]):
+                if state not in mapping:
+                    continue
+                self.prefixes.append(bos + prefix)
+                self.golds.append(gold)
+                self.candsets.append(mapping[state])
+                if len(self.prefixes) >= max_decisions:
+                    break
+            if len(self.prefixes) >= max_decisions:
+                break
+        if not self.prefixes:
+            print(f"[candidate-eval] WARNING: no decision points found in "
+                  f"{eval_path} (no search_steps?); candidate eval disabled.")
+
+    @torch.no_grad()
+    def on_evaluate(self, args, state, control, model=None, **kwargs):
+        # main process only; skip if there is nothing to score
+        if not self.prefixes or not state.is_world_process_zero:
+            return
+
+        tok = self.tokenizer
+        was_training = model.training
+        prev_pad_side, prev_trunc_side = tok.padding_side, tok.truncation_side
+        prev_use_cache = getattr(model.config, "use_cache", None)
+        model.eval()
+        # eval mode bypasses the gradient-checkpointing branch, so the KV cache
+        # can be re-enabled here for fast generation.
+        model.config.use_cache = True
+        tok.padding_side, tok.truncation_side = "left", "left"
+        device = next(model.parameters()).device
+
+        def first_line(t):
+            t = t.lstrip("\n")
+            nl = t.find("\n")
+            return t if nl == -1 else t[:nl]
+
+        preds = []
+        for b in range(0, len(self.prefixes), self.batch_size):
+            batch = self.prefixes[b:b + self.batch_size]
+            enc = tok(batch, return_tensors="pt", padding=True,
+                      truncation=True, max_length=self.max_len).to(device)
+            gen = model.generate(
+                **enc, max_new_tokens=self.max_new_tokens, do_sample=False,
+                num_beams=1, pad_token_id=tok.pad_token_id,
+            )
+            new_tokens = gen[:, enc["input_ids"].shape[1]:]
+            preds.extend(first_line(t)
+                         for t in tok.batch_decode(new_tokens, skip_special_tokens=True))
+
+        in_set = sum(p in c for p, c in zip(preds, self.candsets)) / len(preds)
+        exact = sum(p == g for p, g in zip(preds, self.golds)) / len(preds)
+
+        # restore training state
+        if prev_use_cache is not None:
+            model.config.use_cache = prev_use_cache
+        tok.padding_side, tok.truncation_side = prev_pad_side, prev_trunc_side
+        if was_training:
+            model.train()
+
+        print(f"[candidate-eval] step {state.global_step}: "
+              f"in_set_acc={in_set:.4f} exact_gold_acc={exact:.4f} "
+              f"(n={len(preds)})")
+        if self.use_wandb and wandb.run is not None:
+            wandb.log(
+                {"eval/candidate_in_set_acc": in_set,
+                 "eval/candidate_exact_gold_acc": exact,
+                 "eval/candidate_decisions": len(preds)},
+                step=state.global_step,
+            )
 
 
 def main(args):
@@ -197,6 +304,27 @@ def main(args):
             "valid_target": tokenized_datasets["val_target"],
         },
     )
+
+    # Teacher-forced candidate-set accuracy, evaluated alongside the loss every
+    # eval_steps. Uses the eval file that still carries search_steps (val splits;
+    # the train split has them dropped to save memory).
+    if config.get("candidate_eval", True):
+        cand_file = config.get("candidate_eval_file") or config["val_file"]
+        cand_path = os.path.join(config["data_dir"], cand_file)
+        if os.path.exists(cand_path):
+            trainer.add_callback(CandidateEvalCallback(
+                tokenizer,
+                cand_path,
+                max_decisions=config.get("candidate_eval_decisions", 500),
+                batch_size=config.get("candidate_eval_batch_size",
+                                      config.get("eval_batch_size", 16)),
+                max_new_tokens=config.get("candidate_eval_max_new_tokens", 48),
+                max_len=min(config.get("candidate_eval_max_len", 2048),
+                            context_length),
+                use_wandb=args.wandb,
+            ))
+        else:
+            print(f"[candidate-eval] eval file {cand_path} not found; skipping.")
 
     if args.resume:
         trainer.train(resume_from_checkpoint=args.ckpt)
