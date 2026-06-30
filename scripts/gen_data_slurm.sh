@@ -22,6 +22,12 @@ cd "${SLURM_SUBMIT_DIR:-$(pwd)}/src"
 
 NUM_SAMPLES=500000
 SEED=42
+# Cap on explored successors per search. With 4 starting numbers the full DFS
+# tree is ~1152 nodes; stochastic policies (esp. randomize_backtrack) wander
+# most of it and produce huge per-sample traces, which is what OOMs. Searches
+# that hit the cap are cut short (rating 0). Tune against the "Goal reached"
+# success rate printed per split.
+MAX_NODES=1000
 
 case $SLURM_ARRAY_TASK_ID in
   1)
@@ -48,6 +54,7 @@ uv run python countdown_generate.py \
     --min_range 4 --start_range 4 \
     --max_target 100 \
     --num_samples $NUM_SAMPLES \
+    --max_nodes $MAX_NODES \
     --search dfs $FLAGS
 
 date; hostname

@@ -36,6 +36,7 @@ parser.add_argument("--randomize_heuristic", action="store_true", help="DFS: sam
 parser.add_argument("--randomize_backtrack", action="store_true", help="DFS: sample a random open state to revisit on backtrack instead of the last open state")
 parser.add_argument("--prune_repeated_states", action="store_true", help="DFS: prune any successor whose exact state (multiset of numbers) was already generated earlier in the search")
 parser.add_argument("--temperature", type=float, default=1.0, help="DFS: temperature for the heuristic-weighted distribution (lower = sharper toward the best state)")
+parser.add_argument("--max_nodes", type=int, default=None, help="DFS: cap on the number of explored successors; the search is cut short (rating 0) if it reaches this without finding the target. Bounds memory/trace size for stochastic policies. None = no limit")
 
 # split for growth mode on or off 
 parser.add_argument("--grow", action="store_true", help="grow mode on or off, only a new train set is created")
@@ -79,6 +80,7 @@ if __name__ == "__main__":
             num_samples = 1000
 
         zero_count = 0
+        success_count = 0
         for t in tqdm.tqdm(range(num_samples)):
             start_size = random.randint(args.min_range, args.start_range)
             cd = CountDown(args.max_target, start_size)
@@ -116,7 +118,8 @@ if __name__ == "__main__":
                     randomize_heuristic=args.randomize_heuristic,
                     randomize_backtrack=args.randomize_backtrack,
                     prune_repeated_states=args.prune_repeated_states,
-                    temperature=args.temperature)
+                    temperature=args.temperature,
+                    max_nodes=args.max_nodes)
             elif args.search == "bfs":
                 heuristic = mult_heuristic
                 search = bfs
@@ -131,7 +134,8 @@ if __name__ == "__main__":
                         randomize_heuristic=args.randomize_heuristic,
                         randomize_backtrack=args.randomize_backtrack,
                         prune_repeated_states=args.prune_repeated_states,
-                        temperature=args.temperature)
+                        temperature=args.temperature,
+                        max_nodes=args.max_nodes)
                 elif search == bfs:
                     beam_size = random.choice([1, 2, 3, 4, 5])
                     search_path = bfs(target, nums, beam_size, heuristic=heuristic)
@@ -139,6 +143,7 @@ if __name__ == "__main__":
             else:
                 raise ValueError(f"Search type {args.search} not supported")
             if "Goal Reached" in search_path:
+                success_count += 1
                 rating = 1. - simple_rating(search_path) / max_rating
                 rating = max(0., rating)
             else:
@@ -170,6 +175,7 @@ if __name__ == "__main__":
             total_samples[start_size] += 1
 
         print(f"Zero count: {zero_count}")
+        print(f"Goal reached (target found): {success_count}/{num_samples} ({100. * success_count / num_samples:.1f}%)")
         print(f"Total samples: {total_samples}")
         print(f"average zeros: start size 3: {sum(average_zeros[3])}, start size 4: {sum(average_zeros[4])}, start size 5: {sum(average_zeros[5])}")
         print(f"average token length: start size 3: {(sum(average_token_length[3]) / total_samples[3]) if total_samples[3] else None if total_samples[3] else None}, start size 4: {(sum(average_token_length[4]) / total_samples[4]) if total_samples[4] else None}, start size 5: {(sum(average_token_length[5]) / total_samples[5]) if total_samples[5] else None}")

@@ -137,7 +137,7 @@ def _select_open_node(open_nodes, randomize_backtrack, rng):
 def dfs(target, nums, heuristic=mult_heuristic, threshold=None,
         randomize_op_order=False, randomize_heuristic=False,
         randomize_backtrack=False, prune_repeated_states=False,
-        temperature=1.0, rng=None):
+        temperature=1.0, max_nodes=None, rng=None):
     """Depth-first search over the Countdown game.
 
     The search is emitted lazily, exactly like the original recursive DFS: a
@@ -178,6 +178,13 @@ def dfs(target, nums, heuristic=mult_heuristic, threshold=None,
     ``temperature`` controls the sharpness of the heuristic-weighted
     distribution. ``rng`` is an optional ``random.Random`` instance (defaults to
     the global ``random`` module) so callers retain full control / seeding.
+
+    ``max_nodes`` caps the search length: once that many successors have been
+    explored without reaching the goal, the search stops and the trace is cut
+    short with a ``"Max search length reached"`` line (no goal => rating 0).
+    This bounds memory/trace size for stochastic policies (e.g.
+    ``randomize_backtrack``) that can otherwise wander most of the tree before
+    finding a solution. ``None`` means no limit (original behaviour).
 
     Returns ``(search_trace, steps)``. ``steps`` is a chronological list of the
     decisions the algorithm made, so downstream training/eval can check that a
@@ -316,6 +323,7 @@ def dfs(target, nums, heuristic=mult_heuristic, threshold=None,
             })
         return chosen
 
+    nodes_explored = 0
     node = root
     while node is not None:
         # Re-anchor the trace to ``node`` if we are not already there (this is
@@ -331,9 +339,16 @@ def dfs(target, nums, heuristic=mult_heuristic, threshold=None,
             node = backtrack()
             continue
 
+        # Length limit: stop the search if we've already explored the maximum
+        # number of successors without reaching the goal.
+        if max_nodes is not None and nodes_explored >= max_nodes:
+            search_trace += "Max search length reached\n"
+            return search_trace, steps
+
         # Explore this node's next successor.
         _, child = node.children[node.cursor]
         node.cursor += 1
+        nodes_explored += 1
         search_trace += f"Exploring Operation: {child.operations[-1]}, Resulting Numbers: {child.nums}\n"
         anchor_fresh = False
 
