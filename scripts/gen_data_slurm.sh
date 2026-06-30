@@ -42,7 +42,7 @@ case $SLURM_ARRAY_TASK_ID in
     ;;
 esac
 
-python countdown_generate.py \
+uv run python countdown_generate.py \
     --seed $SEED \
     --data_dir "$DATA_DIR" \
     --min_range 4 --start_range 4 \

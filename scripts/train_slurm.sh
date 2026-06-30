@@ -26,12 +26,9 @@ export TOKENIZERS_PARALLELISM=false
 # Run from src/ so train.py's relative paths (../configs, data/, ckpts/) resolve.
 cd "${SLURM_SUBMIT_DIR:-$(pwd)}/src"
 
-# Use Weights & Biases only when an API key is present; otherwise disable it so
-# the job does not block on login.
-WANDB_FLAG="--no-wandb"
-if [ -n "${WANDB_API_KEY:-}" ]; then
-  WANDB_FLAG="--wandb"
-fi
+# Weights & Biases is enabled by default (run `wandb login` beforehand). Set
+# WANDB_DISABLED=true in the environment to turn it off for a given run.
+WANDB_FLAG="--wandb"
 
 case $SLURM_ARRAY_TASK_ID in
   1)
@@ -60,7 +57,7 @@ OUTPUT_DIR="ckpts/${NAME}"
 # instead, bump `--gres=gpu:N` above and launch with:
 #   accelerate launch --config_file ../configs/accelerate_lora.yaml \
 #       --num_processes N train.py ...
-python train.py --config ../configs/sft-qwen-lora-cd.conf \
+uv run python train.py --config ../configs/sft-qwen-lora-cd.conf \
     --data_dir "$DATA_DIR" \
     --output_dir "$OUTPUT_DIR" \
     --name "$NAME" \
