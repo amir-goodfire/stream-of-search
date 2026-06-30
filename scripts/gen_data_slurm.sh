@@ -28,23 +28,19 @@ SEED=42
 # trace within the training context), add `--max_nodes N` to the command below.
 
 case $SLURM_ARRAY_TASK_ID in
-  1)
-    FLAGS="--randomize_backtrack"
-    DATA_DIR="data/dfs_backtrack"
-    ;;
-  2)
-    FLAGS="--randomize_heuristic"
-    DATA_DIR="data/dfs_heuristic"
-    ;;
-  3)
-    FLAGS="--randomize_backtrack --randomize_heuristic"
-    DATA_DIR="data/dfs_both"
-    ;;
+  1) FLAGS="--randomize_backtrack";                       TAG="backtrack" ;;
+  2) FLAGS="--randomize_heuristic";                       TAG="heuristic" ;;
+  3) FLAGS="--randomize_backtrack --randomize_heuristic"; TAG="backtrack_heuristic" ;;
   *)
     echo "Unexpected task id: $SLURM_ARRAY_TASK_ID" >&2
     exit 1
     ;;
 esac
+
+# countdown_generate.py derives the same tag from FLAGS and appends it to every
+# output filename; the data dir mirrors it so dir and file names stay aligned
+# and no randomization setup overwrites another.
+DATA_DIR="data/dfs_${TAG}"
 
 uv run python countdown_generate.py \
     --seed $SEED \

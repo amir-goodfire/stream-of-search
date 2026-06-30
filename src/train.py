@@ -140,7 +140,8 @@ def main(args):
         config = json.load(f)
 
     # CLI overrides (handy for array jobs that share one config file).
-    for key in ("data_dir", "output_dir", "name"):
+    for key in ("data_dir", "output_dir", "name",
+                "train_file", "val_file", "val_target_file"):
         val = getattr(args, key)
         if val is not None:
             config[key] = val
@@ -349,6 +350,12 @@ if __name__ == "__main__":
                         help="override config['output_dir']")
     parser.add_argument("--name", type=str, default=None,
                         help="override config['name'] (run/output name)")
+    parser.add_argument("--train_file", type=str, default=None,
+                        help="override config['train_file']")
+    parser.add_argument("--val_file", type=str, default=None,
+                        help="override config['val_file']")
+    parser.add_argument("--val_target_file", type=str, default=None,
+                        help="override config['val_target_file']")
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
     main(args)

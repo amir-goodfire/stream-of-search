@@ -73,6 +73,20 @@ if __name__ == "__main__":
     os.makedirs(args.data_dir, exist_ok=True)
     train_solutions = set()
 
+    # Encode which randomization flags are active in the filename so different
+    # setups never overwrite each other. Deterministic runs keep the original
+    # (suffix-less) name for backward compatibility. The order is fixed so the
+    # tag is stable regardless of CLI flag order, and matches the dir/tag used
+    # by scripts/{gen_data,train}_slurm.sh.
+    rand_flags = [
+        ("backtrack", args.randomize_backtrack),
+        ("heuristic", args.randomize_heuristic),
+        ("oporder", args.randomize_op_order),
+        ("prune", args.prune_repeated_states),
+    ]
+    rand_tag = "_".join(name for name, on in rand_flags if on)
+    rand_suffix = f"_{rand_tag}" if rand_tag else ""
+
     for split, target_nums in zip(splits, target_list):
 
         if split == "train" or split=="grow":
@@ -82,7 +96,7 @@ if __name__ == "__main__":
 
         out_path = (
             f"{args.data_dir}/{split}{args.offset}_b{args.start_range}"
-            f"_t{args.max_target}_n{args.num_samples}_{args.search}.json"
+            f"_t{args.max_target}_n{args.num_samples}_{args.search}{rand_suffix}.json"
         )
         # Stream each sample straight to disk instead of accumulating the whole
         # split in RAM: the 500k-sample train split (each carrying a large

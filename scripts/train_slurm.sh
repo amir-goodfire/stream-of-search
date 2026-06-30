@@ -30,37 +30,41 @@ cd "${SLURM_SUBMIT_DIR:-$(pwd)}/src"
 # WANDB_DISABLED=true in the environment to turn it off for a given run.
 WANDB_FLAG="--wandb"
 
+# Each task trains on the dataset its matching gen_data_slurm.sh task produced.
+# TAG must match the randomization tag countdown_generate.py derives from the
+# flags (and the data dir gen_data_slurm.sh writes to).
 case $SLURM_ARRAY_TASK_ID in
-  1)
-    DATA_DIR="data/dfs_backtrack"
-    NAME="sft-qwen2.5-7b-lora-dfs-backtrack"
-    ;;
-  2)
-    DATA_DIR="data/dfs_heuristic"
-    NAME="sft-qwen2.5-7b-lora-dfs-heuristic"
-    ;;
-  3)
-    DATA_DIR="data/dfs_both"
-    NAME="sft-qwen2.5-7b-lora-dfs-both"
-    ;;
+  1) TAG="backtrack" ;;
+  2) TAG="heuristic" ;;
+  3) TAG="backtrack_heuristic" ;;
   *)
     echo "Unexpected task id: $SLURM_ARRAY_TASK_ID" >&2
     exit 1
     ;;
 esac
 
+DATA_DIR="data/dfs_${TAG}"
+NAME="sft-qwen2.5-7b-lora-dfs-${TAG}"
 OUTPUT_DIR="ckpts/${NAME}"
+# Data filenames carry the same tag, matching countdown_generate.py's output.
+BASE="b4_t100_n500000_dfs_${TAG}"
+TRAIN_FILE="train1_${BASE}.json"
+VAL_FILE="val1_${BASE}.json"
+VAL_TARGET_FILE="val_target1_${BASE}.json"
 
 # A single H200 (141 GB) is ample for Qwen2.5-7B + LoRA, so plain `python`
 # (HF Trainer handles the single GPU) is enough. The shared config is overridden
-# per task via --data_dir/--output_dir/--name. To use multiple GPUs on the node
-# instead, bump `--gres=gpu:N` above and launch with:
+# per task via --data_dir/--output_dir/--name/--*_file. To use multiple GPUs on
+# the node instead, bump `--gres=gpu:N` above and launch with:
 #   accelerate launch --config_file ../configs/accelerate_lora.yaml \
 #       --num_processes N train.py ...
 uv run python train.py --config ../configs/sft-qwen-lora-cd.conf \
     --data_dir "$DATA_DIR" \
     --output_dir "$OUTPUT_DIR" \
     --name "$NAME" \
+    --train_file "$TRAIN_FILE" \
+    --val_file "$VAL_FILE" \
+    --val_target_file "$VAL_TARGET_FILE" \
     $WANDB_FLAG
 
 date; hostname
