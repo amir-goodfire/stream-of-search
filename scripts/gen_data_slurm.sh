@@ -2,7 +2,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
 #SBATCH --time=48:00:00
-#SBATCH --job-name=sos-gen
+#SBATCH --job-name=frost-gen
 #SBATCH --output=logs/gen-%A_%a.log
 #SBATCH --array=1-3%3
 

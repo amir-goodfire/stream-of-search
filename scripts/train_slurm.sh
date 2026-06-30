@@ -3,7 +3,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --time=72:00:00
-#SBATCH --job-name=sos-qwen-lora
+#SBATCH --job-name=frost-train
 #SBATCH --output=logs/slurm-%A_%a.log
 #SBATCH --array=1-3%3
 
