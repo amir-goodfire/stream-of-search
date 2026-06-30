@@ -33,9 +33,9 @@ for d in tqdm.tqdm(data):
         target = d['target']
         nums = d['nums']
         if strategy == "dfs-sum":
-            search_path = dfs(target, nums, heuristic=sum_heuristic, threshold=target)
+            search_path, _ = dfs(target, nums, heuristic=sum_heuristic, threshold=target)
         elif strategy == "dfs-mult":
-            search_path = dfs(target, nums, heuristic=mult_heuristic, threshold=target)
+            search_path, _ = dfs(target, nums, heuristic=mult_heuristic, threshold=target)
         elif strategy == "bfs-sum-1":
             search_path = bfs(target, nums, 1, heuristic=sum_heuristic)
         elif strategy == "bfs-sum-2":

@@ -30,6 +30,13 @@ parser.add_argument("--num_samples", type=int, default=1000, help="Number of dat
 # search args
 parser.add_argument("--search", type=str, default="random", help="Search type")
 
+# dfs uncertainty args (focus: dfs with mult_heuristic)
+parser.add_argument("--randomize_op_order", action="store_true", help="DFS: uniformly shuffle the order successors are explored")
+parser.add_argument("--randomize_heuristic", action="store_true", help="DFS: sample successor order weighted by the heuristic (prune still deterministic). Takes precedence over --randomize_op_order")
+parser.add_argument("--randomize_backtrack", action="store_true", help="DFS: sample a random open state to revisit on backtrack instead of the last open state")
+parser.add_argument("--prune_repeated_states", action="store_true", help="DFS: prune any successor whose exact state (multiset of numbers) was already generated earlier in the search")
+parser.add_argument("--temperature", type=float, default=1.0, help="DFS: temperature for the heuristic-weighted distribution (lower = sharper toward the best state)")
+
 # split for growth mode on or off 
 parser.add_argument("--grow", action="store_true", help="grow mode on or off, only a new train set is created")
 parser.add_argument("--offset", type=int, default=1, help="offset for random seed")
@@ -95,18 +102,36 @@ if __name__ == "__main__":
                 while solution in [s["solution"] for s in data_samples["train"]]:
                     target = random.choice(target_nums)
                     nums, solution = cd.generate(target)
+            search_steps = None
             if args.search == "astar":
                 # astar not adapted to new format
                 raise NotImplementedError
             elif args.search == "dfs":
-                search_path = dfs(target, nums, heuristic=sum_heuristic, threshold=target)
+                # focus: dfs with the mult_heuristic
+                heuristic = mult_heuristic
+                search = dfs
+                search_path, search_steps = dfs(
+                    target, nums, heuristic=heuristic, threshold=target,
+                    randomize_op_order=args.randomize_op_order,
+                    randomize_heuristic=args.randomize_heuristic,
+                    randomize_backtrack=args.randomize_backtrack,
+                    prune_repeated_states=args.prune_repeated_states,
+                    temperature=args.temperature)
             elif args.search == "bfs":
-                search_path = bfs(target, nums, 5, heuristic=mult_heuristic)
+                heuristic = mult_heuristic
+                search = bfs
+                search_path = bfs(target, nums, 5, heuristic=heuristic)
             elif args.search == "random":
                 heuristic = random.choice([sum_heuristic, mult_heuristic])
                 search = random.choice([dfs, bfs])
                 if search == dfs:
-                    search_path = dfs(target, nums, heuristic=heuristic, threshold=target)
+                    search_path, search_steps = dfs(
+                        target, nums, heuristic=heuristic, threshold=target,
+                        randomize_op_order=args.randomize_op_order,
+                        randomize_heuristic=args.randomize_heuristic,
+                        randomize_backtrack=args.randomize_backtrack,
+                        prune_repeated_states=args.prune_repeated_states,
+                        temperature=args.temperature)
                 elif search == bfs:
                     beam_size = random.choice([1, 2, 3, 4, 5])
                     search_path = bfs(target, nums, beam_size, heuristic=heuristic)
@@ -130,6 +155,7 @@ if __name__ == "__main__":
                 "target": target,
                 "solution": solution,
                 "search_path": search_path,
+                "search_steps": search_steps,
                 "rating": rating,
                 "search_type": search_type,
                 "optimal_path": no_backtrack_trace,
