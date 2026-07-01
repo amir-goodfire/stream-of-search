@@ -21,6 +21,7 @@ Two views are supported:
   rules, so a trace the model produced on its own can be checked even at states
   that are absent from any recorded trace.
 """
+import math
 import re
 from itertools import combinations
 
@@ -101,6 +102,69 @@ def recompute_candidate_lines(target, nums, threshold=None,
                 local_visited.add(key)
             lines.add(exploring_line(operation, new_nums))
     return lines
+
+
+def heuristic_probs(heuristics, temperature=1.0):
+    """Heuristic-weighted first-draw selection distribution: ``p_i propto
+    exp(-(h_i - h_min) / T)`` (lower heuristic == better == more mass). This is
+    exactly the distribution the randomized DFS samples the successor order from
+    when ``randomize_heuristic`` is set (see ``countdown_dfs._heuristic_probs``);
+    duplicated here to keep this module torch-free and importable on its own."""
+    if not heuristics:
+        return []
+    h_min = min(heuristics)
+    weights = [math.exp(-(h - h_min) / temperature) for h in heuristics]
+    total = sum(weights)
+    if total == 0:
+        n = len(heuristics)
+        return [1.0 / n] * n
+    return [w / total for w in weights]
+
+
+def recompute_candidate_dist(target, nums, threshold=None, temperature=1.0,
+                             prune_repeated_states=False, visited=None,
+                             heuristic=mult_heuristic):
+    """Like ``recompute_candidate_lines`` but also returns the heuristic-weighted
+    probability the randomized DFS assigns to each kept candidate.
+
+    Returns a list of ``(line, heuristic_value, prob)`` tuples in generation
+    order, where ``prob`` is the first-draw selection probability
+    (``heuristic_probs`` over the kept candidates' heuristics). This is the
+    "expected next-step distribution" the search would follow from ``nums`` under
+    ``randomize_heuristic`` at ``temperature`` (the policy used to generate the
+    ``heuristic`` / ``backtrack_heuristic`` datasets, with ``threshold=target``,
+    ``temperature=1.0``). Candidate generation + pruning mirror
+    ``recompute_candidate_lines`` / ``countdown_dfs.dfs`` exactly.
+
+    Distinct index pairs can yield the *same* trace line when the input has
+    repeated numbers (e.g. two ways to form ``3-2=1``); the DFS treats these as
+    separate candidates, but as a distribution over distinct next-step *strings*
+    their probabilities are summed here (mirroring ``recompute_candidate_lines``,
+    which likewise dedupes to a set). Result is ordered by first appearance."""
+    local_visited = set(visited) if visited is not None else set()
+    kept = []  # (line, heuristic_value)
+    for i, j in combinations(range(len(nums)), 2):
+        for result, operation in combine_nums(nums[i], nums[j]):
+            new_nums = [nums[k] for k in range(len(nums)) if k != i and k != j] + [result]
+            h = heuristic(new_nums, target)
+            if threshold is not None and h > threshold:
+                continue
+            if prune_repeated_states:
+                key = state_key(new_nums)
+                if key in local_visited:
+                    continue
+                local_visited.add(key)
+            kept.append((exploring_line(operation, new_nums), h))
+    probs = heuristic_probs([h for (_line, h) in kept], temperature)
+
+    # Merge duplicate lines, summing their selection probability.
+    merged = {}  # line -> [heuristic, summed_prob]
+    for (line, h), p in zip(kept, probs):
+        if line in merged:
+            merged[line][1] += p
+        else:
+            merged[line] = [h, p]
+    return [(line, h, p) for line, (h, p) in merged.items()]
 
 
 # ---------------------------------------------------------------------------

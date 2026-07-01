@@ -141,7 +141,8 @@ def main(args):
 
     # CLI overrides (handy for array jobs that share one config file).
     for key in ("data_dir", "output_dir", "name",
-                "train_file", "val_file", "val_target_file"):
+                "train_file", "val_file", "val_target_file",
+                "max_steps", "save_steps"):
         val = getattr(args, key)
         if val is not None:
             config[key] = val
@@ -274,6 +275,9 @@ def main(args):
         gradient_accumulation_steps=config["gradient_accumulation_steps"],
         gradient_checkpointing=config.get("gradient_checkpointing", True),
         gradient_checkpointing_kwargs={"use_reentrant": False},
+        # max_steps (>0) caps training at a fixed number of optimizer steps
+        # (== W&B steps) and overrides num_train_epochs; -1 means "use epochs".
+        max_steps=int(config.get("max_steps", -1)),
         num_train_epochs=config["num_train_epochs"],
         weight_decay=config["weight_decay"],
         warmup_steps=config["warmup_steps"],
@@ -356,6 +360,11 @@ if __name__ == "__main__":
                         help="override config['val_file']")
     parser.add_argument("--val_target_file", type=str, default=None,
                         help="override config['val_target_file']")
+    parser.add_argument("--max_steps", type=int, default=None,
+                        help="override config['max_steps']: cap training at this many "
+                             "optimizer/W&B steps (overrides num_train_epochs)")
+    parser.add_argument("--save_steps", type=int, default=None,
+                        help="override config['save_steps']: checkpoint every N steps")
     parser.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
     main(args)

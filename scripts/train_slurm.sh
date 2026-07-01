@@ -58,6 +58,12 @@ VAL_TARGET_FILE="val_target1_${BASE}.json"
 # the node instead, bump `--gres=gpu:N` above and launch with:
 #   accelerate launch --config_file ../configs/accelerate_lora.yaml \
 #       --num_processes N train.py ...
+# Train for a fixed 4000 optimizer steps (== W&B steps), saving a checkpoint
+# every 1000 steps (-> checkpoints at 1000/2000/3000/4000). --max_steps overrides
+# the config's num_train_epochs. save_steps stays a multiple of the config's
+# eval_steps (500) so load_best_model_at_end works.
+MAX_STEPS=4000
+SAVE_STEPS=1000
 uv run python train.py --config ../configs/sft-qwen-lora-cd.conf \
     --data_dir "$DATA_DIR" \
     --output_dir "$OUTPUT_DIR" \
@@ -65,6 +71,8 @@ uv run python train.py --config ../configs/sft-qwen-lora-cd.conf \
     --train_file "$TRAIN_FILE" \
     --val_file "$VAL_FILE" \
     --val_target_file "$VAL_TARGET_FILE" \
+    --max_steps "$MAX_STEPS" \
+    --save_steps "$SAVE_STEPS" \
     $WANDB_FLAG
 
 date; hostname
