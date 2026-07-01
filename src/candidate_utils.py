@@ -218,6 +218,87 @@ def iter_decision_prefixes(trace):
             prefix += raw
 
 
+_MOVING_RE = re.compile(r"Moving to Node #([\d,]+)")
+
+
+def _is_desc_or_self(node_idx, other_idx):
+    """True iff ``other_idx`` is ``node_idx`` or one of its descendants (node
+    indices are comma-joined paths, e.g. "0,1,0"). The comma guard keeps "0,10"
+    from matching "0,1"."""
+    return other_idx == node_idx or other_idx.startswith(node_idx + ",")
+
+
+def trace_on_track_labels(trace):
+    """Label every "Current State:" occurrence in ``trace`` with whether the
+    search goes on to reach the goal, and how directly.
+
+    The DFS trace makes backtracking explicit: every visit is announced with a
+    "Moving to Node #idx" line (a *forward* move always goes to a child of the
+    node just left; anything else is a backtrack). For each occurrence of a
+    "Current State" line (one decision point, at node ``N``) we report:
+
+      * ``solved``                - "Goal Reached" appears later in the trace.
+      * ``solved_within_subtree`` - the goal is reached before the search ever
+        moves to a node outside ``N``'s subtree (moves to ``N`` itself or a
+        descendant are fine, i.e. retrying siblings below ``N`` still counts as
+        staying "on track" within the subtree).
+      * ``solved_no_backtrack``   - the goal is reached by straight descent:
+        every subsequent move goes to a child of the node just left (implies
+        ``solved_within_subtree``).
+
+    Returns a list of dicts in occurrence order, each carrying ``line_index``,
+    ``current_state`` (the stripped line, for alignment checks), ``node_idx``,
+    and the three labels. Works on model-generated traces too (unparseable
+    moves are simply never matched); a trace with no goal labels everything
+    False."""
+    lines = trace.splitlines()
+    goal_i = None
+    for i, line in enumerate(lines):
+        if "Goal Reached" in line:
+            goal_i = i
+            break
+
+    # Current node at each "Current State" occurrence: the root ("0") until the
+    # first move; every "Moving to Node #idx" line re-anchors it.
+    occurrences = []
+    cur = "0"
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        m = _MOVING_RE.match(stripped)
+        if m:
+            cur = m.group(1)
+            continue
+        if stripped.startswith("Current State:"):
+            occurrences.append((i, cur, stripped))
+
+    out = []
+    for i, node, state_line in occurrences:
+        solved = goal_i is not None and goal_i > i
+        within = solved
+        straight = solved
+        prev = node
+        if solved:
+            for j in range(i + 1, goal_i):
+                m = _MOVING_RE.match(lines[j].strip())
+                if not m:
+                    continue
+                mv = m.group(1)
+                if not _is_desc_or_self(node, mv):
+                    within = False
+                if not mv.startswith(prev + ","):  # forward move = child of prev
+                    straight = False
+                prev = mv
+        out.append({
+            "line_index": i,
+            "current_state": state_line,
+            "node_idx": node,
+            "solved": solved,
+            "solved_within_subtree": within,
+            "solved_no_backtrack": straight and within,
+        })
+    return out
+
+
 def parse_decisions(trace):
     """List of ``(current_state_line, explore_line)`` pairs in a trace."""
     decisions = []
