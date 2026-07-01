@@ -296,7 +296,7 @@ def main(args):
 
     trainer = Trainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         args=training_args,
         data_collator=data_collator,
         train_dataset=tokenized_datasets["train"],
